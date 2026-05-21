@@ -7,11 +7,9 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
-import kaggle
-from kaggle.api.kaggle_api_extended import KaggleApi
-
-api: KaggleApi = kaggle.api
+api: Any = None
 
 
 class ApiException(Exception):
@@ -25,24 +23,55 @@ class ApiException(Exception):
 _TERMINAL = {"complete", "error", "cancelled"}
 
 
+def _get_api() -> Any:
+    global api
+    if api is None:
+        from kaggle.api.kaggle_api_extended import KaggleApi
+
+        api = KaggleApi()
+    return api
+
+
+def _extract_status_code(exc: BaseException) -> int | None:
+    status = getattr(exc, "status", None)
+    if isinstance(status, int):
+        return status
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    return response_status if isinstance(response_status, int) else None
+
+
+def _safe_extract_tar(archive: Path, dest: Path) -> None:
+    with tarfile.open(archive, "r:gz") as tar:
+        dest_root = dest.resolve()
+        for member in tar.getmembers():
+            member_path = (dest / member.name).resolve()
+            if member_path != dest_root and dest_root not in member_path.parents:
+                raise ValueError(f"Unsafe archive member path: {member.name}")
+        try:
+            tar.extractall(dest, filter="data")
+        except TypeError:
+            tar.extractall(dest)
+
+
 def upload_dataset(archive: Path, dataset_slug: str) -> None:
     """Upload archive as a new or updated Kaggle dataset version."""
+    api = _get_api()
     api.authenticate()
     username = api.get_config_value("username")
     full_slug = f"{username}/{dataset_slug}"
 
     # mkdtemp so the dir outlives the function (Kaggle API reads it after call returns)
     tmp_dir = Path(tempfile.mkdtemp(prefix="hitc_ds_"))
-    with tarfile.open(archive, "r:gz") as tar:
-        tar.extractall(tmp_dir)
+    _safe_extract_tar(archive, tmp_dir)
     (tmp_dir / "dataset-metadata.json").write_text(
         json.dumps({"id": full_slug, "title": dataset_slug, "licenses": [{"name": "unknown"}]})
     )
     try:
-        api.dataset_create_version(path=tmp_dir, version_notes="hitc upload", quiet=True)
-    except ApiException as exc:
-        if exc.status == 404:
-            api.dataset_create_new(path=tmp_dir, public=False, quiet=True)
+        api.dataset_create_version(str(tmp_dir), version_notes="hitc upload", quiet=True)
+    except Exception as exc:
+        if _extract_status_code(exc) == 404:
+            api.dataset_create_new(str(tmp_dir), public=False, quiet=True)
         else:
             raise
 
@@ -52,6 +81,7 @@ def run_kernel(script: str, dataset_slug: str, kernel_slug: str) -> str:
 
     Returns the kernel ref ("username/kernel_slug").
     """
+    api = _get_api()
     api.authenticate()
     username = api.get_config_value("username")
     kernel_ref = f"{username}/{kernel_slug}"
@@ -90,6 +120,7 @@ def run_kernel(script: str, dataset_slug: str, kernel_slug: str) -> str:
 
 def poll_kernel(kernel_ref: str, interval: int = 30) -> str:
     """Block until kernel reaches a terminal status; return that status."""
+    api = _get_api()
     api.authenticate()
     while True:
         status = api.kernels_status(kernel_ref).status
@@ -100,6 +131,7 @@ def poll_kernel(kernel_ref: str, interval: int = 30) -> str:
 
 def download_output(kernel_ref: str, dest_dir: Path) -> list[Path]:
     """Download kernel output files into dest_dir; return list of files."""
+    api = _get_api()
     api.authenticate()
     api.kernels_output(kernel_ref, path=str(dest_dir))
     return list(dest_dir.iterdir())

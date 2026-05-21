@@ -45,7 +45,7 @@ class TestUploadDataset:
 
         mock_api.dataset_create_new.assert_called_once()
         call_kwargs = mock_api.dataset_create_new.call_args
-        folder_arg = call_kwargs[1].get("path") or call_kwargs[0][0]
+        folder_arg = call_kwargs[1].get("folder") or call_kwargs[0][0]
         assert Path(folder_arg).is_dir()
 
     def test_upload_dataset_calls_create_version_on_update(self, tmp_path, mocker):
@@ -95,6 +95,24 @@ class TestUploadDataset:
 
         from headinthecloud import kaggle_client
         with pytest.raises(ApiException):
+            kaggle_client.upload_dataset(archive, "ws")
+
+    def test_upload_dataset_rejects_path_traversal_archive(self, tmp_path, mocker):
+        """Unsafe tar member paths are rejected."""
+        import tarfile
+
+        archive = tmp_path / "dataset.tar.gz"
+        safe = tmp_path / "safe.txt"
+        safe.write_text("ok")
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(safe, arcname="../evil.txt")
+
+        mock_api = mocker.MagicMock()
+        mocker.patch("headinthecloud.kaggle_client.api", mock_api)
+
+        from headinthecloud import kaggle_client
+
+        with pytest.raises(ValueError, match="Unsafe archive member path"):
             kaggle_client.upload_dataset(archive, "ws")
 
 
