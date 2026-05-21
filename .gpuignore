@@ -1,0 +1,37 @@
+# Files excluded from upload to remote GPU
+# Syntax matches .gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Large model weights (already on remote or too big)
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# Datasets (mount separately on Kaggle)
+data/
+datasets/
+*.csv
+*.parquet
+
+# Output artifacts
+output/
+results/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Git
+.git/
