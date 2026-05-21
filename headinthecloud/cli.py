@@ -50,7 +50,7 @@ def run(script: str, platform: str | None, output: str | None) -> None:
     if status == "complete":
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
-            files = kaggle_client.download_output(kernel_ref, Path(tmp))
+            kaggle_client.download_output(kernel_ref, Path(tmp))
             result_zip = collector.collect(Path(tmp), output_dir)
         click.echo(f"[hitc] Done. Results: {result_zip}")
         notifier.notify(f"hitc: job done — {result_zip.name}")
@@ -60,7 +60,7 @@ def run(script: str, platform: str | None, output: str | None) -> None:
         raise SystemExit(1)
 
 
-@main.group()
+@main.group(name="config")
 def cfg() -> None:
     """Manage hitc configuration."""
 
