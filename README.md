@@ -20,7 +20,7 @@ packer          ── tar.gz of .py / .yaml / .json / .toml / .txt files
     │               (respects .gpuignore, skips model weights)
     ▼
 kaggle_client   ── uploads archive as a private Kaggle dataset
-    │               creates new dataset or bumps version automatically
+    │               creates a new dataset or bumps the version automatically
     ▼
 kaggle_client   ── pushes a kernel that mounts the dataset, runs your script
     │               GPU enabled, internet off, /kaggle/working as cwd
