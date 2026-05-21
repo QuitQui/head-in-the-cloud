@@ -9,6 +9,7 @@ output_dir = "./output"
 
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 
@@ -32,10 +33,10 @@ _DEFAULTS: dict = {
 
 def load() -> dict:
     if not _CONFIG_FILE.exists():
-        return _DEFAULTS.copy()
+        return copy.deepcopy(_DEFAULTS)
     with _CONFIG_FILE.open("rb") as f:
         data = tomllib.load(f)
-    merged = _DEFAULTS.copy()
+    merged = copy.deepcopy(_DEFAULTS)
     for section, values in data.items():
         merged.setdefault(section, {}).update(values)
     return merged

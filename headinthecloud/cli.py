@@ -27,6 +27,8 @@ def run(script: str, platform: str | None, output: str | None) -> None:
     from pathlib import Path
 
     platform = platform or config.get("platform") or "kaggle"
+    if platform != "kaggle":
+        raise click.UsageError(f"Unsupported platform: {platform!r}. Supported: 'kaggle'.")
     output_dir = Path(output or config.get("output_dir") or "./output")
     project_dir = Path(script).parent.resolve()
     script_name = Path(script).name
