@@ -71,7 +71,7 @@ class TestUploadDataset:
         mock_api.get_config_value.return_value = "testuser"
 
         def _capture_version(*args, **kwargs):
-            folder = kwargs.get("path") or args[0]
+            folder = kwargs.get("folder") or kwargs.get("path") or args[0]
             captured_paths.append(Path(folder))
 
         mock_api.dataset_create_version.side_effect = _capture_version
