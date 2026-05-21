@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from headinthecloud import notifier
 
 
@@ -29,3 +31,10 @@ def test_notify_empty_message(mocker):
     notifier.notify("")
 
     mock_run.assert_called_once_with(["link", "send", ""], check=True, capture_output=True)
+
+
+def test_notify_propagates_unexpected_exceptions(mocker):
+    mocker.patch("subprocess.run", side_effect=RuntimeError("boom"))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        notifier.notify("Test message")

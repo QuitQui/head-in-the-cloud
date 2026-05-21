@@ -50,7 +50,7 @@ def test_collect_zip_filename_has_timestamp(tmp_path):
 
     result = collector.collect(kernel_dir, tmp_path / "results")
 
-    assert re.match(r"results_\d{8}_\d{6}\.zip", result.name)
+    assert re.fullmatch(r"results_\d{8}_\d{6}\.zip", result.name)
 
 
 def test_collect_empty_kernel_dir(tmp_path):

@@ -58,7 +58,7 @@ def run(script: str, platform: str | None, output: str | None) -> None:
         raise SystemExit(1)
 
 
-@main.group()
+@main.group(name="config")
 def cfg() -> None:
     """Manage hitc configuration."""
 
