@@ -1,11 +1,13 @@
-"""Send notifications via Link (terminal-to-Slack bridge).
-
-Implemented in Phase 2 (feat/collector-notifier branch).
-"""
+"""Send notifications via Link (terminal-to-Slack bridge)."""
 
 from __future__ import annotations
+
+import subprocess
 
 
 def notify(message: str) -> None:
     """Send message via `link send`. Silently skips if link is not installed."""
-    raise NotImplementedError("notifier not yet implemented")
+    try:
+        subprocess.run(["link", "send", message], check=True, capture_output=True)
+    except FileNotFoundError:
+        pass
