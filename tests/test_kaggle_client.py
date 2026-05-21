@@ -26,6 +26,41 @@ def _make_tar(tmp_path: Path) -> Path:
     return archive
 
 
+def test_extract_status_code_helper():
+    from headinthecloud import kaggle_client
+
+    class _WithStatus(Exception):
+        status = 404
+
+    class _Response:
+        status_code = 500
+
+    class _WithResponse(Exception):
+        response = _Response()
+
+    assert kaggle_client._extract_status_code(_WithStatus()) == 404
+    assert kaggle_client._extract_status_code(_WithResponse()) == 500
+    assert kaggle_client._extract_status_code(Exception("x")) is None
+
+
+def test_safe_extract_tar_uses_data_filter_when_available(tmp_path, mocker):
+    from headinthecloud import kaggle_client
+
+    fake_tar = mocker.MagicMock()
+    fake_tar.getmembers.return_value = []
+
+    fake_ctx = mocker.MagicMock()
+    fake_ctx.__enter__.return_value = fake_tar
+    fake_ctx.__exit__.return_value = False
+
+    mocker.patch("headinthecloud.kaggle_client.tarfile.open", return_value=fake_ctx)
+    mocker.patch("headinthecloud.kaggle_client.tarfile.data_filter", object(), create=True)
+
+    kaggle_client._safe_extract_tar(tmp_path / "dummy.tar.gz", tmp_path)
+
+    fake_tar.extractall.assert_called_once_with(tmp_path, filter="data")
+
+
 # ---------------------------------------------------------------------------
 # upload_dataset
 # ---------------------------------------------------------------------------
