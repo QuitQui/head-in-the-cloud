@@ -48,7 +48,7 @@ Get your key at kaggle.com → Account → API → Create New Token.
 
 **Python 3.10+** and [uv](https://docs.astral.sh/uv/).
 
-**Link** (optional) — for notifications. If `link` is not installed, the notify step is silently skipped.
+**[Link](https://github.com/QuitQui/Link)** (optional) — for notifications. If `link` is not installed, the notify step is silently skipped.
 
 ---
 
