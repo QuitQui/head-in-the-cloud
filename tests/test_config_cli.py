@@ -20,3 +20,4 @@ def test_run_rejects_unsupported_platform(tmp_path):
 
     assert result.exit_code != 0
     assert "Unsupported platform" in result.output
+    assert "'aws'" in result.output
