@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import tarfile
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 api: Any = None
+_api_lock = threading.Lock()
 
 
 class ApiException(Exception):
@@ -25,12 +27,13 @@ _TERMINAL = {"complete", "error", "cancelled"}
 
 def _get_api() -> Any:
     global api
-    if api is None:
-        from kaggle.api.kaggle_api_extended import KaggleApi
+    with _api_lock:
+        if api is None:
+            from kaggle.api.kaggle_api_extended import KaggleApi
 
-        api = KaggleApi()
-    api.authenticate()
-    return api
+            api = KaggleApi()
+        api.authenticate()
+        return api
 
 
 def _extract_status_code(exc: BaseException) -> int | None:
@@ -47,7 +50,8 @@ def _safe_extract_tar(archive: Path, dest: Path) -> None:
         dest_root = dest.resolve()
         for member in tar.getmembers():
             member_path = (dest / member.name).resolve()
-            if member_path != dest_root and dest_root not in member_path.parents:
+            is_within_dest = member_path == dest_root or dest_root in member_path.parents
+            if not is_within_dest:
                 raise ValueError(f"Unsafe archive member path: {member.name}")
         extract_kwargs = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
         tar.extractall(dest, **extract_kwargs)
