@@ -86,8 +86,13 @@ def upload_dataset(archive: Path, dataset_slug: str) -> None:
             raise
 
 
-def run_kernel(script: str, dataset_slug: str, kernel_slug: str) -> str:
+def run_kernel(script: str, dataset_slug: str, kernel_slug: str,
+               env: dict[str, str] | None = None) -> str:
     """Push a Kaggle kernel that mounts dataset_slug and runs script.
+
+    ``env`` maps environment variable names to values that are written into the
+    generated runner as ``os.environ`` assignments (e.g. forwarding a secret like
+    WANDB_API_KEY). Values are baked into the private runner and never printed.
 
     Returns the kernel ref ("username/kernel_slug").
     """
@@ -101,10 +106,16 @@ def run_kernel(script: str, dataset_slug: str, kernel_slug: str) -> str:
         # Kaggle auto-extracts tar.gz uploads, so files land at
         # /kaggle/input/{dataset_slug}/ directly (not workspace.tar.gz).
         # Copy to /kaggle/working/ (writable) before running the script.
+        env_lines = ""
+        if env:
+            for _k, _v in env.items():
+                env_lines += f"os.environ[{json.dumps(_k)}] = {json.dumps(_v)}\n"
+            env_lines += "\n"
         runner = (
             "import subprocess, shutil, os, sys\n"
             "from pathlib import Path\n\n"
-            f"src = Path('/kaggle/input/{dataset_slug}')\n"
+            + env_lines
+            + f"src = Path('/kaggle/input/{dataset_slug}')\n"
             "dst = Path('/kaggle/working')\n"
             "shutil.copytree(str(src), str(dst), dirs_exist_ok=True)\n\n"
             "os.chdir('/kaggle/working')\n"

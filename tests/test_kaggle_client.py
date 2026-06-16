@@ -301,6 +301,35 @@ class TestRunKernel:
         assert "/kaggle/working" in runner_src
         assert "train.py" in runner_src
 
+    def test_run_kernel_injects_env_into_runner(self, mocker):
+        """env dict becomes os.environ assignments in the runner script."""
+        written_scripts: list[str] = []
+
+        mock_api = mocker.MagicMock()
+        mock_api.get_config_value.return_value = "testuser"
+
+        def _capture_push(folder):
+            for f in Path(folder).iterdir():
+                if f.suffix == ".py":
+                    written_scripts.append(f.read_text())
+
+        mock_api.kernels_push.side_effect = _capture_push
+        mocker.patch("headinthecloud.kaggle_client.api", mock_api)
+
+        from headinthecloud import kaggle_client
+        kaggle_client.run_kernel(
+            script="train.py",
+            dataset_slug="ws",
+            kernel_slug="hitc-runner",
+            env={"WANDB_API_KEY": "secret-value-123"},
+        )
+
+        runner_src = written_scripts[0]
+        assert 'os.environ["WANDB_API_KEY"]' in runner_src
+        assert "secret-value-123" in runner_src  # value must be baked in to work
+        # assignment must come before the user script runs
+        assert runner_src.index("WANDB_API_KEY") < runner_src.index("train.py")
+
 
 # ---------------------------------------------------------------------------
 # poll_kernel
