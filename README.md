@@ -79,6 +79,29 @@ Output is saved to `./output/results_<timestamp>.zip` in your working directory.
 
 ---
 
+## Forwarding secrets (`-e/--env`)
+
+Pass a secret (e.g. a Weights & Biases key) into the kernel without committing it
+anywhere. The value is read from your **local** environment and injected into the
+private runner:
+
+```bash
+export WANDB_API_KEY=...        # already in your shell / .env
+hitc run train.py -e WANDB_API_KEY        # repeatable: -e KEY1 -e KEY2
+```
+
+Safety guarantees:
+
+- Only the **key name** is printed (`[hitc] Forwarding env vars: WANDB_API_KEY`) —
+  the value is never echoed to stdout or written to logs.
+- The value is read from `os.environ` at launch time; it is never packed into the
+  uploaded dataset, stored in config, or included in downloaded results.
+- The runner kernel is created with `is_private: True`. Use scope-limited,
+  rotatable keys so a leak (e.g. via kernel logs you choose to share) is contained.
+- A missing key fails fast: `Error: KEY not set in local environment`.
+
+---
+
 ## Ignoring files
 
 Create a `.gpuignore` in your project root. Syntax is identical to `.gitignore`:

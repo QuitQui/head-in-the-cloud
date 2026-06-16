@@ -44,7 +44,7 @@ def test_run_accepts_kaggle_platform(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli.packer, "pack", lambda project_dir: tmp_path / "project.zip")
     monkeypatch.setattr(cli.kaggle_client, "upload_dataset", lambda archive, dataset_slug: None)
-    monkeypatch.setattr(cli.kaggle_client, "run_kernel", lambda script_name, dataset_slug, kernel_slug: "kernel/ref")
+    monkeypatch.setattr(cli.kaggle_client, "run_kernel", lambda script_name, dataset_slug, kernel_slug, env=None: "kernel/ref")
     monkeypatch.setattr(cli.kaggle_client, "poll_kernel", lambda kernel_ref: "complete")
     monkeypatch.setattr(cli.kaggle_client, "download_output", lambda kernel_ref, output_dir: [])
     monkeypatch.setattr(cli.collector, "collect", lambda tmp_dir, output_dir: output_dir / "results.zip")
