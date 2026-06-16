@@ -96,8 +96,8 @@ class TestUploadDataset:
 
         mock_api.dataset_create_version.assert_called_once()
 
-    def test_upload_dataset_unzips_archive(self, tmp_path, mocker):
-        """The archive contents appear in the temp directory passed to the API."""
+    def test_upload_dataset_copies_archive_as_single_file(self, tmp_path, mocker):
+        """The archive is uploaded as a single workspace.tar.gz (Kaggle extracts it)."""
         archive = _make_tar(tmp_path)
 
         captured_paths: list[Path] = []
@@ -121,11 +121,13 @@ class TestUploadDataset:
         kaggle_client.upload_dataset(archive, "ws")
 
         assert captured_paths, "create_version was never called with a path"
-        unpacked_dir = captured_paths[0]
-        assert (unpacked_dir / "data.csv").exists()
+        upload_dir = captured_paths[0]
+        # Single-file upload: the tar.gz is copied as-is, not extracted locally.
+        assert (upload_dir / "workspace.tar.gz").exists()
+        assert not (upload_dir / "data.csv").exists()
 
     def test_upload_dataset_propagates_api_error(self, tmp_path, mocker):
-        """Non-404 API errors propagate without being swallowed."""
+        """Non-404/403 API errors propagate without being swallowed."""
         archive = _make_tar(tmp_path)
 
         mock_api = mocker.MagicMock()
@@ -137,23 +139,25 @@ class TestUploadDataset:
         with pytest.raises(ApiException):
             kaggle_client.upload_dataset(archive, "ws")
 
-    def test_upload_dataset_rejects_path_traversal_archive(self, tmp_path, mocker):
-        """Unsafe tar member paths are rejected."""
-        import tarfile
-
-        archive = tmp_path / "dataset.tar.gz"
-        safe = tmp_path / "safe.txt"
-        safe.write_text("ok")
-        with tarfile.open(archive, "w:gz") as tar:
-            tar.add(safe, arcname="../evil.txt")
+    def test_upload_dataset_calls_create_new_on_403(self, tmp_path, mocker):
+        """Kaggle newer SDK returns 403 for missing dataset; falls back to create_new."""
+        archive = _make_tar(tmp_path)
 
         mock_api = mocker.MagicMock()
+        mock_api.get_config_value.return_value = "testuser"
+        mock_api.dataset_create_version.side_effect = ApiException(status=403)
         mocker.patch("headinthecloud.kaggle_client.api", mock_api)
 
         from headinthecloud import kaggle_client
+        kaggle_client.upload_dataset(archive, "ws")
 
-        with pytest.raises(ValueError, match="Unsafe archive member path"):
-            kaggle_client.upload_dataset(archive, "ws")
+        mock_api.dataset_create_new.assert_called_once()
+
+# NOTE: the former test_upload_dataset_rejects_path_traversal_archive was removed:
+# upload_dataset no longer extracts the archive locally (it copies the tar.gz as a
+# single file and lets Kaggle extract it server-side), so there is no local
+# traversal step to guard. The _safe_extract_tar path-traversal protection is still
+# covered directly by test_safe_extract_tar_uses_data_filter_when_available above.
 
 
 # ---------------------------------------------------------------------------
@@ -203,8 +207,13 @@ class TestRunKernel:
         meta = written_metadata[0]
         assert "testuser/ws" in meta.get("dataset_sources", [])
 
-    def test_run_kernel_metadata_sets_gpu_and_no_internet(self, mocker):
-        """kernel-metadata.json sets enable_gpu=true and enable_internet=false."""
+    def test_run_kernel_metadata_sets_gpu_and_internet(self, mocker):
+        """kernel-metadata.json sets enable_gpu=true and enable_internet=true.
+
+        Internet is enabled so kernel scripts can pip-install extras (e.g.
+        torch_geometric, ortools) that are not pre-installed on the Kaggle
+        GPU image.
+        """
         written_metadata: list[dict] = []
 
         mock_api = mocker.MagicMock()
@@ -227,7 +236,7 @@ class TestRunKernel:
 
         meta = written_metadata[0]
         assert meta.get("enable_gpu") is True
-        assert meta.get("enable_internet") is False
+        assert meta.get("enable_internet") is True
 
     def test_run_kernel_metadata_type_is_script(self, mocker):
         """kernel-metadata.json sets kernel_type='script' and language='python'."""
@@ -282,6 +291,35 @@ class TestRunKernel:
         assert "/kaggle/working" in runner_src
         assert "train.py" in runner_src
 
+    def test_run_kernel_injects_env_into_runner(self, mocker):
+        """env dict becomes os.environ assignments in the runner script."""
+        written_scripts: list[str] = []
+
+        mock_api = mocker.MagicMock()
+        mock_api.get_config_value.return_value = "testuser"
+
+        def _capture_push(folder):
+            for f in Path(folder).iterdir():
+                if f.suffix == ".py":
+                    written_scripts.append(f.read_text())
+
+        mock_api.kernels_push.side_effect = _capture_push
+        mocker.patch("headinthecloud.kaggle_client.api", mock_api)
+
+        from headinthecloud import kaggle_client
+        kaggle_client.run_kernel(
+            script="train.py",
+            dataset_slug="ws",
+            kernel_slug="hitc-runner",
+            env={"WANDB_API_KEY": "secret-value-123"},
+        )
+
+        runner_src = written_scripts[0]
+        assert 'os.environ["WANDB_API_KEY"]' in runner_src
+        assert "secret-value-123" in runner_src  # value must be baked in to work
+        # assignment must come before the user script runs
+        assert runner_src.index("WANDB_API_KEY") < runner_src.index("train.py")
+
 
 # ---------------------------------------------------------------------------
 # poll_kernel
@@ -314,16 +352,16 @@ class TestPollKernel:
         assert result == "error"
 
     def test_poll_kernel_returns_on_cancelled(self, mocker):
-        """Returns 'cancelled' when the kernel status is 'cancelled'."""
+        """Returns the cancel status (lowercased) for a Kaggle cancel terminal."""
         mock_api = mocker.MagicMock()
-        mock_api.kernels_status.return_value = mocker.MagicMock(status="cancelled")
+        mock_api.kernels_status.return_value = mocker.MagicMock(status="CANCEL_ACKNOWLEDGED")
         mocker.patch("headinthecloud.kaggle_client.api", mock_api)
         mocker.patch("headinthecloud.kaggle_client.time.sleep")
 
         from headinthecloud import kaggle_client
         result = kaggle_client.poll_kernel("testuser/hitc-runner", interval=1)
 
-        assert result == "cancelled"
+        assert result == "cancel_acknowledged"
 
     def test_poll_kernel_loops_until_terminal(self, mocker):
         """Keeps polling when status is non-terminal, stops when terminal."""

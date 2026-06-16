@@ -22,8 +22,15 @@ def main() -> None:
 @click.argument("script", type=click.Path(exists=True))
 @click.option("--platform", default=None, help="Platform override (default: from config)")
 @click.option("--output", default=None, type=click.Path(), help="Local output directory")
-def run(script: str, platform: str | None, output: str | None) -> None:
+@click.option(
+    "-e", "--env", "env_keys", multiple=True, metavar="KEY",
+    help="Forward env var KEY from your local environment into the kernel "
+         "(repeatable). Value is read locally, never printed.",
+)
+def run(script: str, platform: str | None, output: str | None,
+        env_keys: tuple[str, ...]) -> None:
     """Pack local project, run SCRIPT on a remote GPU, collect results."""
+    import os
     from pathlib import Path
 
     platform = platform or config.get("platform") or "kaggle"
@@ -32,6 +39,16 @@ def run(script: str, platform: str | None, output: str | None) -> None:
     output_dir = Path(output or config.get("output_dir") or "./output")
     project_dir = Path(script).parent.resolve()
     script_name = Path(script).name
+
+    # Resolve secrets from the local environment. Values are forwarded into the
+    # private kernel runner but never echoed — only the key names are printed.
+    env: dict[str, str] = {}
+    for key in env_keys:
+        if key not in os.environ:
+            raise click.UsageError(f"{key} not set in local environment")
+        env[key] = os.environ[key]
+    if env:
+        click.echo(f"[hitc] Forwarding env vars: {', '.join(env)}")
 
     click.echo(f"[hitc] Packing {project_dir} ...")
     archive = packer.pack(project_dir)
@@ -42,7 +59,7 @@ def run(script: str, platform: str | None, output: str | None) -> None:
     kaggle_client.upload_dataset(archive, dataset_slug)
 
     click.echo(f"[hitc] Launching kernel: {script_name}")
-    kernel_ref = kaggle_client.run_kernel(script_name, dataset_slug, kernel_slug)
+    kernel_ref = kaggle_client.run_kernel(script_name, dataset_slug, kernel_slug, env=env)
 
     click.echo("[hitc] Polling for completion (Ctrl-C to detach) ...")
     status = kaggle_client.poll_kernel(kernel_ref)

@@ -19,9 +19,13 @@ INCLUDE_EXTENSIONS = {
     ".json",
     ".toml",
     ".txt",
+    ".npz",   # NumPy archive — small committed datasets (e.g. synthetic_v2_clean)
 }
 
-# Default exclusion patterns — always applied even without a .gpuignore
+# Default exclusion patterns — always applied even without a .gpuignore.
+# Large binary model weights are excluded; committed small data (.npz) is NOT
+# excluded so training scripts can rely on on-disk datasets without regenerating.
+# Add "data/" to your project's .gpuignore if you want to exclude it.
 DEFAULT_EXCLUDES = [
     "__pycache__/",
     "*.pyc",
@@ -35,8 +39,6 @@ DEFAULT_EXCLUDES = [
     "*.ckpt",
     "*.safetensors",
     "*.bin",
-    "data/",
-    "datasets/",
     "*.csv",
     "*.parquet",
     "output/",

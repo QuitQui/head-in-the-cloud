@@ -22,7 +22,7 @@ class ApiException(Exception):
         super().__init__(f"Kaggle API error: status={status}")
 
 
-_TERMINAL = {"complete", "error", "cancelled"}
+_TERMINAL = {"COMPLETE", "ERROR", "CANCEL_REQUESTED", "CANCEL_ACKNOWLEDGED"}
 
 
 def _get_api() -> Any:
@@ -58,28 +58,41 @@ def _safe_extract_tar(archive: Path, dest: Path) -> None:
 
 
 def upload_dataset(archive: Path, dataset_slug: str) -> None:
-    """Upload archive as a new or updated Kaggle dataset version."""
+    """Upload archive as a new or updated Kaggle dataset version.
+
+    The tar.gz is uploaded as a single file (workspace.tar.gz) rather than
+    extracted, because the Kaggle dataset API does not recursively upload
+    subdirectories — only root-level files in the folder are included.
+    """
+    import shutil
+
     api = _get_api()
     username = api.get_config_value("username")
     full_slug = f"{username}/{dataset_slug}"
 
     # mkdtemp so the dir outlives the function (Kaggle API reads it after call returns)
     tmp_dir = Path(tempfile.mkdtemp(prefix="hitc_ds_"))
-    _safe_extract_tar(archive, tmp_dir)
+    shutil.copy2(archive, tmp_dir / "workspace.tar.gz")
     (tmp_dir / "dataset-metadata.json").write_text(
         json.dumps({"id": full_slug, "title": dataset_slug, "licenses": [{"name": "unknown"}]})
     )
     try:
         api.dataset_create_version(folder=str(tmp_dir), version_notes="hitc upload", quiet=True)
     except Exception as exc:
-        if _extract_status_code(exc) == 404:
+        # Kaggle API returns 404 (dataset missing) or 403 (resource not found in newer SDK)
+        if _extract_status_code(exc) in (403, 404):
             api.dataset_create_new(folder=str(tmp_dir), public=False, quiet=True)
         else:
             raise
 
 
-def run_kernel(script: str, dataset_slug: str, kernel_slug: str) -> str:
+def run_kernel(script: str, dataset_slug: str, kernel_slug: str,
+               env: dict[str, str] | None = None) -> str:
     """Push a Kaggle kernel that mounts dataset_slug and runs script.
+
+    ``env`` maps environment variable names to values that are written into the
+    generated runner as ``os.environ`` assignments (e.g. forwarding a secret like
+    WANDB_API_KEY). Values are baked into the private runner and never printed.
 
     Returns the kernel ref ("username/kernel_slug").
     """
@@ -90,15 +103,23 @@ def run_kernel(script: str, dataset_slug: str, kernel_slug: str) -> str:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
 
+        # Kaggle auto-extracts tar.gz uploads, so files land at
+        # /kaggle/input/{dataset_slug}/ directly (not workspace.tar.gz).
+        # Copy to /kaggle/working/ (writable) before running the script.
+        env_lines = ""
+        if env:
+            for _k, _v in env.items():
+                env_lines += f"os.environ[{json.dumps(_k)}] = {json.dumps(_v)}\n"
+            env_lines += "\n"
         runner = (
-            "import subprocess, shutil, os\n"
+            "import subprocess, shutil, os, sys\n"
             "from pathlib import Path\n\n"
-            f"src = Path('/kaggle/input/{dataset_slug}')\n"
+            + env_lines
+            + f"src = Path('/kaggle/input/{dataset_slug}')\n"
             "dst = Path('/kaggle/working')\n"
-            "for f in src.iterdir():\n"
-            "    shutil.copy2(f, dst / f.name)\n\n"
+            "shutil.copytree(str(src), str(dst), dirs_exist_ok=True)\n\n"
             "os.chdir('/kaggle/working')\n"
-            f"subprocess.run(['python', '{script}'], check=True)\n"
+            f"subprocess.run([sys.executable, '{script}'], check=True)\n"
         )
         (tmp_dir / "runner.py").write_text(runner)
         (tmp_dir / "kernel-metadata.json").write_text(
@@ -110,7 +131,7 @@ def run_kernel(script: str, dataset_slug: str, kernel_slug: str) -> str:
                 "kernel_type": "script",
                 "is_private": True,
                 "enable_gpu": True,
-                "enable_internet": False,
+                "enable_internet": True,
                 "dataset_sources": [f"{username}/{dataset_slug}"],
             })
         )
@@ -124,8 +145,9 @@ def poll_kernel(kernel_ref: str, interval: int = 30) -> str:
     api = _get_api()
     while True:
         status = api.kernels_status(kernel_ref).status
-        if status in _TERMINAL:
-            return status
+        status_name = status.name if hasattr(status, "name") else str(status).upper()
+        if status_name in _TERMINAL:
+            return status_name.lower()
         time.sleep(interval)
 
 
