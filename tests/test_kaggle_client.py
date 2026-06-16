@@ -96,8 +96,8 @@ class TestUploadDataset:
 
         mock_api.dataset_create_version.assert_called_once()
 
-    def test_upload_dataset_unzips_archive(self, tmp_path, mocker):
-        """The archive contents appear in the temp directory passed to the API."""
+    def test_upload_dataset_copies_archive_as_single_file(self, tmp_path, mocker):
+        """The archive is uploaded as a single workspace.tar.gz (Kaggle extracts it)."""
         archive = _make_tar(tmp_path)
 
         captured_paths: list[Path] = []
@@ -121,8 +121,10 @@ class TestUploadDataset:
         kaggle_client.upload_dataset(archive, "ws")
 
         assert captured_paths, "create_version was never called with a path"
-        unpacked_dir = captured_paths[0]
-        assert (unpacked_dir / "data.csv").exists()
+        upload_dir = captured_paths[0]
+        # Single-file upload: the tar.gz is copied as-is, not extracted locally.
+        assert (upload_dir / "workspace.tar.gz").exists()
+        assert not (upload_dir / "data.csv").exists()
 
     def test_upload_dataset_propagates_api_error(self, tmp_path, mocker):
         """Non-404/403 API errors propagate without being swallowed."""
@@ -151,23 +153,11 @@ class TestUploadDataset:
 
         mock_api.dataset_create_new.assert_called_once()
 
-    def test_upload_dataset_rejects_path_traversal_archive(self, tmp_path, mocker):
-        """Unsafe tar member paths are rejected."""
-        import tarfile
-
-        archive = tmp_path / "dataset.tar.gz"
-        safe = tmp_path / "safe.txt"
-        safe.write_text("ok")
-        with tarfile.open(archive, "w:gz") as tar:
-            tar.add(safe, arcname="../evil.txt")
-
-        mock_api = mocker.MagicMock()
-        mocker.patch("headinthecloud.kaggle_client.api", mock_api)
-
-        from headinthecloud import kaggle_client
-
-        with pytest.raises(ValueError, match="Unsafe archive member path"):
-            kaggle_client.upload_dataset(archive, "ws")
+# NOTE: the former test_upload_dataset_rejects_path_traversal_archive was removed:
+# upload_dataset no longer extracts the archive locally (it copies the tar.gz as a
+# single file and lets Kaggle extract it server-side), so there is no local
+# traversal step to guard. The _safe_extract_tar path-traversal protection is still
+# covered directly by test_safe_extract_tar_uses_data_filter_when_available above.
 
 
 # ---------------------------------------------------------------------------
@@ -362,16 +352,16 @@ class TestPollKernel:
         assert result == "error"
 
     def test_poll_kernel_returns_on_cancelled(self, mocker):
-        """Returns 'cancelled' when the kernel status is 'cancelled'."""
+        """Returns the cancel status (lowercased) for a Kaggle cancel terminal."""
         mock_api = mocker.MagicMock()
-        mock_api.kernels_status.return_value = mocker.MagicMock(status="cancelled")
+        mock_api.kernels_status.return_value = mocker.MagicMock(status="CANCEL_ACKNOWLEDGED")
         mocker.patch("headinthecloud.kaggle_client.api", mock_api)
         mocker.patch("headinthecloud.kaggle_client.time.sleep")
 
         from headinthecloud import kaggle_client
         result = kaggle_client.poll_kernel("testuser/hitc-runner", interval=1)
 
-        assert result == "cancelled"
+        assert result == "cancel_acknowledged"
 
     def test_poll_kernel_loops_until_terminal(self, mocker):
         """Keeps polling when status is non-terminal, stops when terminal."""
