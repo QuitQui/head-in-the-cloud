@@ -125,7 +125,7 @@ class TestUploadDataset:
         assert (unpacked_dir / "data.csv").exists()
 
     def test_upload_dataset_propagates_api_error(self, tmp_path, mocker):
-        """Non-404 API errors propagate without being swallowed."""
+        """Non-404/403 API errors propagate without being swallowed."""
         archive = _make_tar(tmp_path)
 
         mock_api = mocker.MagicMock()
@@ -136,6 +136,20 @@ class TestUploadDataset:
         from headinthecloud import kaggle_client
         with pytest.raises(ApiException):
             kaggle_client.upload_dataset(archive, "ws")
+
+    def test_upload_dataset_calls_create_new_on_403(self, tmp_path, mocker):
+        """Kaggle newer SDK returns 403 for missing dataset; falls back to create_new."""
+        archive = _make_tar(tmp_path)
+
+        mock_api = mocker.MagicMock()
+        mock_api.get_config_value.return_value = "testuser"
+        mock_api.dataset_create_version.side_effect = ApiException(status=403)
+        mocker.patch("headinthecloud.kaggle_client.api", mock_api)
+
+        from headinthecloud import kaggle_client
+        kaggle_client.upload_dataset(archive, "ws")
+
+        mock_api.dataset_create_new.assert_called_once()
 
     def test_upload_dataset_rejects_path_traversal_archive(self, tmp_path, mocker):
         """Unsafe tar member paths are rejected."""
@@ -203,8 +217,13 @@ class TestRunKernel:
         meta = written_metadata[0]
         assert "testuser/ws" in meta.get("dataset_sources", [])
 
-    def test_run_kernel_metadata_sets_gpu_and_no_internet(self, mocker):
-        """kernel-metadata.json sets enable_gpu=true and enable_internet=false."""
+    def test_run_kernel_metadata_sets_gpu_and_internet(self, mocker):
+        """kernel-metadata.json sets enable_gpu=true and enable_internet=true.
+
+        Internet is enabled so kernel scripts can pip-install extras (e.g.
+        torch_geometric, ortools) that are not pre-installed on the Kaggle
+        GPU image.
+        """
         written_metadata: list[dict] = []
 
         mock_api = mocker.MagicMock()
@@ -227,7 +246,7 @@ class TestRunKernel:
 
         meta = written_metadata[0]
         assert meta.get("enable_gpu") is True
-        assert meta.get("enable_internet") is False
+        assert meta.get("enable_internet") is True
 
     def test_run_kernel_metadata_type_is_script(self, mocker):
         """kernel-metadata.json sets kernel_type='script' and language='python'."""

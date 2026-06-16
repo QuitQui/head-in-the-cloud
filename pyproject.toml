@@ -10,6 +10,7 @@ dependencies = [
     "requests>=2.31",
     "tomli>=2.0; python_version < '3.11'",
     "tomli-w>=1.0",
+    "six>=1.17.0",
 ]
 
 [project.scripts]
