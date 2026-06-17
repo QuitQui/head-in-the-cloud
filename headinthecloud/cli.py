@@ -27,8 +27,14 @@ def main() -> None:
     help="Forward env var KEY from your local environment into the kernel "
          "(repeatable). Value is read locally, never printed.",
 )
+@click.option(
+    "--gpu", "gpu", type=click.Choice(["t4", "p100", "tpu"]), default="t4",
+    show_default=True,
+    help="Accelerator to request. Default 't4' (sm_75) — Kaggle's legacy P100 "
+         "(sm_60) is incompatible with the current base torch build.",
+)
 def run(script: str, platform: str | None, output: str | None,
-        env_keys: tuple[str, ...]) -> None:
+        env_keys: tuple[str, ...], gpu: str) -> None:
     """Pack local project, run SCRIPT on a remote GPU, collect results."""
     import os
     from pathlib import Path
@@ -58,8 +64,12 @@ def run(script: str, platform: str | None, output: str | None,
     kernel_slug = "hitc-runner"
     kaggle_client.upload_dataset(archive, dataset_slug)
 
-    click.echo(f"[hitc] Launching kernel: {script_name}")
-    kernel_ref = kaggle_client.run_kernel(script_name, dataset_slug, kernel_slug, env=env)
+    machine_shape = {"t4": "NvidiaTeslaT4", "p100": "NvidiaTeslaP100",
+                     "tpu": "Tpu1VmV38"}[gpu]
+    click.echo(f"[hitc] Launching kernel: {script_name} ({machine_shape})")
+    kernel_ref = kaggle_client.run_kernel(
+        script_name, dataset_slug, kernel_slug, env=env,
+        machine_shape=machine_shape)
 
     click.echo("[hitc] Polling for completion (Ctrl-C to detach) ...")
     status = kaggle_client.poll_kernel(kernel_ref)
