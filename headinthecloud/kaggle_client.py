@@ -87,12 +87,18 @@ def upload_dataset(archive: Path, dataset_slug: str) -> None:
 
 
 def run_kernel(script: str, dataset_slug: str, kernel_slug: str,
-               env: dict[str, str] | None = None) -> str:
+               env: dict[str, str] | None = None,
+               machine_shape: str | None = None) -> str:
     """Push a Kaggle kernel that mounts dataset_slug and runs script.
 
     ``env`` maps environment variable names to values that are written into the
     generated runner as ``os.environ`` assignments (e.g. forwarding a secret like
     WANDB_API_KEY). Values are baked into the private runner and never printed.
+
+    ``machine_shape`` selects the accelerator (``NvidiaTeslaT4`` /
+    ``NvidiaTeslaP100`` / ``Tpu1VmV38``). Kaggle's legacy ``enable_gpu`` default
+    assigns a P100, whose sm_60 kernels were dropped from the current base
+    ``torch`` build; request ``NvidiaTeslaT4`` (sm_75) to stay compatible.
 
     Returns the kernel ref ("username/kernel_slug").
     """
@@ -133,6 +139,7 @@ def run_kernel(script: str, dataset_slug: str, kernel_slug: str,
                 "enable_gpu": True,
                 "enable_internet": True,
                 "dataset_sources": [f"{username}/{dataset_slug}"],
+                **({"machine_shape": machine_shape} if machine_shape else {}),
             })
         )
         api.kernels_push(str(tmp_dir))

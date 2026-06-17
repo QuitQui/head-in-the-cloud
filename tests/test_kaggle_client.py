@@ -238,6 +238,55 @@ class TestRunKernel:
         assert meta.get("enable_gpu") is True
         assert meta.get("enable_internet") is True
 
+    def test_run_kernel_metadata_sets_machine_shape_when_given(self, mocker):
+        """machine_shape is written when requested (e.g. T4 to avoid P100/sm_60)."""
+        written_metadata: list[dict] = []
+
+        mock_api = mocker.MagicMock()
+        mock_api.get_config_value.return_value = "testuser"
+
+        def _capture_push(folder):
+            meta_path = Path(folder) / "kernel-metadata.json"
+            if meta_path.exists():
+                written_metadata.append(json.loads(meta_path.read_text()))
+
+        mock_api.kernels_push.side_effect = _capture_push
+        mocker.patch("headinthecloud.kaggle_client.api", mock_api)
+
+        from headinthecloud import kaggle_client
+        kaggle_client.run_kernel(
+            script="train.py",
+            dataset_slug="ws",
+            kernel_slug="hitc-runner",
+            machine_shape="NvidiaTeslaT4",
+        )
+
+        assert written_metadata[0].get("machine_shape") == "NvidiaTeslaT4"
+
+    def test_run_kernel_metadata_omits_machine_shape_by_default(self, mocker):
+        """No machine_shape key when none is requested (Kaggle default applies)."""
+        written_metadata: list[dict] = []
+
+        mock_api = mocker.MagicMock()
+        mock_api.get_config_value.return_value = "testuser"
+
+        def _capture_push(folder):
+            meta_path = Path(folder) / "kernel-metadata.json"
+            if meta_path.exists():
+                written_metadata.append(json.loads(meta_path.read_text()))
+
+        mock_api.kernels_push.side_effect = _capture_push
+        mocker.patch("headinthecloud.kaggle_client.api", mock_api)
+
+        from headinthecloud import kaggle_client
+        kaggle_client.run_kernel(
+            script="train.py",
+            dataset_slug="ws",
+            kernel_slug="hitc-runner",
+        )
+
+        assert "machine_shape" not in written_metadata[0]
+
     def test_run_kernel_metadata_type_is_script(self, mocker):
         """kernel-metadata.json sets kernel_type='script' and language='python'."""
         written_metadata: list[dict] = []
