@@ -109,21 +109,26 @@ def run_kernel(script: str, dataset_slug: str, kernel_slug: str,
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
 
-        # Kaggle auto-extracts tar.gz uploads, so files land at
-        # /kaggle/input/{dataset_slug}/ directly (not workspace.tar.gz).
-        # Copy to /kaggle/working/ (writable) before running the script.
+        # Dataset uploads contain a single workspace.tar.gz. Extract it into
+        # /kaggle/working/ (writable) before running the user script. If Kaggle
+        # ever auto-extracts this file for us, fall back to copying the tree.
         env_lines = ""
         if env:
             for _k, _v in env.items():
                 env_lines += f"os.environ[{json.dumps(_k)}] = {json.dumps(_v)}\n"
             env_lines += "\n"
         runner = (
-            "import subprocess, shutil, os, sys\n"
+            "import subprocess, shutil, os, sys, tarfile\n"
             "from pathlib import Path\n\n"
             + env_lines
             + f"src = Path('/kaggle/input/{dataset_slug}')\n"
             "dst = Path('/kaggle/working')\n"
-            "shutil.copytree(str(src), str(dst), dirs_exist_ok=True)\n\n"
+            "archive = src / 'workspace.tar.gz'\n"
+            "if archive.exists():\n"
+            "    with tarfile.open(archive, 'r:gz') as tar:\n"
+            "        tar.extractall(dst)\n"
+            "else:\n"
+            "    shutil.copytree(str(src), str(dst), dirs_exist_ok=True)\n\n"
             "os.chdir('/kaggle/working')\n"
             f"subprocess.run([sys.executable, '{script}'], check=True)\n"
         )

@@ -97,7 +97,7 @@ class TestUploadDataset:
         mock_api.dataset_create_version.assert_called_once()
 
     def test_upload_dataset_copies_archive_as_single_file(self, tmp_path, mocker):
-        """The archive is uploaded as a single workspace.tar.gz (Kaggle extracts it)."""
+        """The archive is uploaded as a single workspace.tar.gz."""
         archive = _make_tar(tmp_path)
 
         captured_paths: list[Path] = []
@@ -338,6 +338,8 @@ class TestRunKernel:
         assert written_scripts, "no Python script was written to the push folder"
         runner_src = written_scripts[0]
         assert "/kaggle/working" in runner_src
+        assert "workspace.tar.gz" in runner_src
+        assert "tarfile.open" in runner_src
         assert "train.py" in runner_src
 
     def test_run_kernel_injects_env_into_runner(self, mocker):
