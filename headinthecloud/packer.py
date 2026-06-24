@@ -1,54 +1,54 @@
-"""Pack local training files into a tar.gz for upload.
+"""Pack a local project directory into a tar.gz for upload to a remote GPU.
 
-Implemented in Phase 2 (feat/packer branch).
+Design: **blacklist-only** (like .gitignore / .dockerignore). Every file is
+included by default; only files matching an exclusion pattern are dropped.
+This avoids the "silently missing file" class of bugs that a whitelist causes.
+
+Exclusion sources (applied in order):
+  1. ``DEFAULT_EXCLUDES`` — always applied (environment junk that no remote
+     runner needs: ``.venv/``, ``.git/``, ``__pycache__/``, etc.).
+  2. ``.gpuignore`` in the project root (or a custom ``ignore_file``) —
+     project-specific exclusions, same syntax as ``.gitignore``:
+       - ``pattern``  excludes matching files
+       - ``!pattern`` un-excludes (overrides a previous exclude)
+       - ``dir/``     excludes entire directories
+       - ``# comment`` and blank lines are ignored
+
+A packing summary is printed to stderr so the user can verify what's included.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import sys
 import tarfile
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Extensions considered training-relevant
-INCLUDE_EXTENSIONS = {
-    ".py",
-    ".yaml",
-    ".yml",
-    ".json",
-    ".toml",
-    ".txt",
-    ".npz",   # NumPy archive — small committed datasets (e.g. synthetic_v2_clean)
-}
-
-# Default exclusion patterns — always applied even without a .gpuignore.
-# Large binary model weights are excluded; committed small data (.npz) is NOT
-# excluded so training scripts can rely on on-disk datasets without regenerating.
-# Add "data/" to your project's .gpuignore if you want to exclude it.
+# Genuine environment junk — things no remote GPU runner ever needs.
+# Intentionally minimal: if in doubt, leave it OUT of this list and let the
+# user add it to .gpuignore. Model weights (*.pt etc.) are NOT excluded by
+# default — they are often needed (e.g. pretrained checkpoints for fine-tuning).
 DEFAULT_EXCLUDES = [
-    "__pycache__/",
-    "*.pyc",
-    "*.pyo",
     ".venv/",
     "venv/",
     "env/",
     ".git/",
-    "*.pt",
-    "*.pth",
-    "*.ckpt",
-    "*.safetensors",
-    "*.bin",
-    "*.csv",
-    "*.parquet",
-    "output/",
-    "results/",
+    "__pycache__/",
+    "*.pyc",
+    "*.pyo",
     ".DS_Store",
+    ".worktrees/",
+    "node_modules/",
 ]
+
+# Size warning threshold (bytes). Printed to stderr; does not block packing.
+SIZE_WARNING_BYTES = 500 * 1024 * 1024  # 500 MB
 
 
 def _load_patterns(ignore_file: Path) -> list[str]:
-    """Read patterns from a .gpuignore-style file, stripping comments and blanks."""
+    """Read patterns from a .gpuignore file, preserving order (including ``!``)."""
     patterns: list[str] = []
     for line in ignore_file.read_text().splitlines():
         line = line.strip()
@@ -57,68 +57,61 @@ def _load_patterns(ignore_file: Path) -> list[str]:
     return patterns
 
 
-def _is_excluded(rel_path: Path, patterns: list[str]) -> bool:
-    """Return True if *rel_path* matches any exclusion pattern.
-
-    Supports two kinds of patterns:
-    - Directory patterns ending in '/' — match any path component equal to
-      the directory name (e.g. ``__pycache__/`` excludes anything whose
-      parts contain ``__pycache__``).
-    - Glob patterns — matched against the file name and the full relative
-      path string using fnmatch.
-    """
+def _matches_pattern(rel_path: Path, pattern: str) -> bool:
+    """Check if rel_path matches a single pattern (without ``!`` prefix)."""
     parts = rel_path.parts
     name = rel_path.name
     rel_str = str(rel_path)
 
-    for pattern in patterns:
-        if pattern.endswith("/"):
-            # Directory pattern — exclude if any part of the path equals
-            # the directory name (without trailing slash).
-            dir_name = pattern.rstrip("/")
-            if dir_name in parts:
-                return True
-        else:
-            # Glob pattern — match against the file name and the full path.
-            if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(rel_str, pattern):
-                return True
+    if pattern.endswith("/"):
+        dir_name = pattern.rstrip("/")
+        return dir_name in parts
+    return fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(rel_str, pattern)
 
-    return False
+
+def _is_excluded(rel_path: Path, patterns: list[str]) -> bool:
+    """Evaluate the pattern list in order; ``!pattern`` un-excludes.
+
+    Last matching pattern wins (same semantics as .gitignore).
+    """
+    excluded = False
+    for pattern in patterns:
+        if pattern.startswith("!"):
+            if _matches_pattern(rel_path, pattern[1:]):
+                excluded = False
+        else:
+            if _matches_pattern(rel_path, pattern):
+                excluded = True
+    return excluded
 
 
 def _collect_files(project_dir: Path, patterns: list[str]) -> list[Path]:
-    """Walk project_dir and return files that pass the exclusion filter."""
+    """Walk project_dir and return all files not excluded by patterns."""
     collected: list[Path] = []
     for path in sorted(project_dir.rglob("*")):
         if not path.is_file():
             continue
         rel = path.relative_to(project_dir)
-        if _is_excluded(rel, patterns):
-            continue
-        if path.suffix.lower() in INCLUDE_EXTENSIONS or _is_requirements(path.name):
+        if not _is_excluded(rel, patterns):
             collected.append(path)
     return collected
 
 
-def _is_requirements(name: str) -> bool:
-    """True for requirements*.txt filenames."""
-    return fnmatch.fnmatch(name, "requirements*.txt")
-
-
-def pack(project_dir: Path, ignore_file: Path | None = None) -> Path:
-    """Bundle training-relevant files from project_dir into a tar.gz.
+def pack(project_dir: Path, ignore_file: Path | None = None,
+         quiet: bool = False) -> Path:
+    """Bundle all non-excluded files from project_dir into a tar.gz.
 
     Args:
-        project_dir: Root directory of the training project.
-        ignore_file: Path to a .gpuignore file.  If None, looks for
-            ``project_dir/.gpuignore``.  Missing file is silently ignored.
+        project_dir: Root directory of the project.
+        ignore_file: Path to a .gpuignore file. If None, looks for
+            ``project_dir/.gpuignore``. Missing file is silently ignored.
+        quiet: Suppress the packing summary.
 
     Returns:
         Path to the created ``project_<timestamp>.tar.gz`` archive.
     """
     project_dir = Path(project_dir).resolve()
 
-    # Build the combined exclusion pattern list.
     patterns: list[str] = list(DEFAULT_EXCLUDES)
 
     if ignore_file is None:
@@ -135,9 +128,20 @@ def pack(project_dir: Path, ignore_file: Path | None = None) -> Path:
     archive_name = f"project_{timestamp}.tar.gz"
     archive_path = Path(tempfile.gettempdir()) / archive_name
 
+    total_bytes = 0
     with tarfile.open(archive_path, "w:gz") as tar:
         for file_path in files:
             arcname = str(file_path.relative_to(project_dir))
             tar.add(file_path, arcname=arcname)
+            total_bytes += file_path.stat().st_size
+
+    if not quiet:
+        mb = total_bytes / (1024 * 1024)
+        print(f"[hitc pack] {len(files)} files, {mb:.1f} MB "
+              f"(from {project_dir.name}/)", file=sys.stderr, flush=True)
+        if total_bytes > SIZE_WARNING_BYTES:
+            print(f"[hitc pack] WARNING: archive is {mb:.0f} MB "
+                  f"(>{SIZE_WARNING_BYTES // (1024*1024)} MB). Consider adding "
+                  f"exclusions to .gpuignore.", file=sys.stderr, flush=True)
 
     return archive_path
