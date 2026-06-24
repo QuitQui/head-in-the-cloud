@@ -64,8 +64,12 @@ def _matches_pattern(rel_path: Path, pattern: str) -> bool:
     rel_str = str(rel_path)
 
     if pattern.endswith("/"):
-        dir_name = pattern.rstrip("/")
-        return dir_name in parts
+        dir_pat = pattern.rstrip("/")
+        if "/" in dir_pat:
+            # Multi-component dir pattern (e.g. "data/drc_eval/"):
+            # match if the relative path starts with the pattern prefix.
+            return rel_str.startswith(dir_pat + "/") or rel_str == dir_pat
+        return dir_pat in parts
     return fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(rel_str, pattern)
 
 
