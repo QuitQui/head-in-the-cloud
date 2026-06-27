@@ -136,7 +136,10 @@ def run_kernel(script: str, dataset_slug: str, kernel_slug: str,
         (tmp_dir / "kernel-metadata.json").write_text(
             json.dumps({
                 "id": kernel_ref,
-                "title": "HITC Runner",
+                # Title must slugify to kernel_slug — Kaggle derives the kernel
+                # slug from the title, so a fixed title forces every run to the
+                # same kernel (breaking parallel runs).
+                "title": kernel_slug,
                 "code_file": "runner.py",
                 "language": "python",
                 "kernel_type": "script",
