@@ -33,10 +33,16 @@ def main() -> None:
     help="Accelerator to request. Default 't4' (sm_75) — Kaggle's legacy P100 "
          "(sm_60) is incompatible with the current base torch build.",
 )
+@click.option(
+    "--name", "name", default=None,
+    help="Unique run name -> separate Kaggle dataset+kernel slugs so multiple "
+         "runs go in PARALLEL. Default: derived from the script filename.",
+)
 def run(script: str, platform: str | None, output: str | None,
-        env_keys: tuple[str, ...], gpu: str) -> None:
+        env_keys: tuple[str, ...], gpu: str, name: str | None) -> None:
     """Pack local project, run SCRIPT on a remote GPU, collect results."""
     import os
+    import re
     from pathlib import Path
 
     platform = platform or config.get("platform") or "kaggle"
@@ -60,8 +66,11 @@ def run(script: str, platform: str | None, output: str | None,
     archive = packer.pack(project_dir)
 
     click.echo(f"[hitc] Uploading to {platform} ...")
-    dataset_slug = "hitc-workspace"
-    kernel_slug = "hitc-runner"
+    # Unique per-run slugs (default: from the script name) so concurrent runs
+    # use distinct Kaggle dataset+kernel and don't clobber each other.
+    suffix = name or re.sub(r"[^a-z0-9]+", "-", Path(script).stem.lower()).strip("-")
+    dataset_slug = f"hitc-workspace-{suffix}"
+    kernel_slug = f"hitc-runner-{suffix}"
     kaggle_client.upload_dataset(archive, dataset_slug)
 
     machine_shape = {"t4": "NvidiaTeslaT4", "p100": "NvidiaTeslaP100",
