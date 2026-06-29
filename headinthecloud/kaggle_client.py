@@ -57,6 +57,28 @@ def _safe_extract_tar(archive: Path, dest: Path) -> None:
         tar.extractall(dest, **extract_kwargs)
 
 
+def _wait_dataset_ready(api, full_slug: str, timeout: int = 300,
+                        grace: int = 90) -> None:
+    """Block until the newly-uploaded dataset version is processed.
+
+    A kernel that mounts a brand-new dataset can start before Kaggle has
+    finished processing it, mounting nothing (FileNotFoundError on
+    /kaggle/input/<slug>). Poll the dataset status; if the status API is
+    unavailable, fall back to a fixed grace sleep.
+    """
+    import time
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            status = str(api.dataset_status(full_slug)).lower()
+        except Exception:
+            time.sleep(grace)          # status API unavailable -> best-effort wait
+            return
+        if "ready" in status:
+            return
+        time.sleep(5)
+
+
 def upload_dataset(archive: Path, dataset_slug: str) -> None:
     """Upload archive as a new or updated Kaggle dataset version.
 
@@ -84,6 +106,8 @@ def upload_dataset(archive: Path, dataset_slug: str) -> None:
             api.dataset_create_new(folder=str(tmp_dir), public=False, quiet=True)
         else:
             raise
+    # Wait for Kaggle to finish processing this version before a kernel mounts it.
+    _wait_dataset_ready(api, full_slug)
 
 
 def run_kernel(script: str, dataset_slug: str, kernel_slug: str,
@@ -136,7 +160,10 @@ def run_kernel(script: str, dataset_slug: str, kernel_slug: str,
         (tmp_dir / "kernel-metadata.json").write_text(
             json.dumps({
                 "id": kernel_ref,
-                "title": "HITC Runner",
+                # Title must slugify to kernel_slug — Kaggle derives the kernel
+                # slug from the title, so a fixed title forces every run to the
+                # same kernel (breaking parallel runs).
+                "title": kernel_slug,
                 "code_file": "runner.py",
                 "language": "python",
                 "kernel_type": "script",
